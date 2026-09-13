@@ -137,13 +137,23 @@ def export_schedule_to_docx(
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     _set_table_borders(table)
 
+    # Force fixed column widths: without this, Word ignores per-cell widths and
+    # autofits every column to an equal share of the table width, which is what
+    # was silently defeating our column-width settings below.
+    table.autofit = False
+
     # Proportional column widths matching existing_schedule.docx:
-    # Col 0 (Subject): 0.38 in (~550 dxa) - compact vertical label
+    # Col 0 (Subject): 1.0 in - wide enough for horizontal word-wrap over 2-3 lines
     # Col 1 (Teacher): 1.15 in (~1650 dxa) - compact teacher names with wrapping
     # Cols 2..46 (45 Period columns): 0.21 in (~302 dxa) each
-    col_width_subj = Inches(0.38)
+    col_width_subj = Inches(1.0)
     col_width_teacher = Inches(1.15)
     col_width_period = Inches(0.21)
+
+    table.columns[0].width = col_width_subj
+    table.columns[1].width = col_width_teacher
+    for c in range(2, total_cols):
+        table.columns[c].width = col_width_period
 
     # Header styling constants
     header_bg_color = "F3F4F6"
@@ -290,13 +300,6 @@ def export_schedule_to_docx(
         merged_cell = table.cell(run_start_row, 0).merge(table.cell(total_rows - 1, 0))
         for p in merged_cell.paragraphs[1:]:
             p._p.getparent().remove(p._p)
-
-    # Set bottom-to-top vertical text direction (btLr) on column 0 for compact vertical orientation
-    for r_idx in range(total_rows):
-        tc = table.cell(r_idx, 0)._tc
-        tcPr = tc.get_or_add_tcPr()
-        if tcPr.find(f'{{{nsdecls("w").split()[-1][8:-1]}}}textDirection') is None:
-            tcPr.append(parse_xml(f'<w:textDirection {nsdecls("w")} w:val="btLr"/>'))
 
     # Enable header repetition across pages
     tr_pr_0 = table.rows[0]._tr.get_or_add_trPr()

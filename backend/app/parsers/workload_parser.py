@@ -177,6 +177,13 @@ def normalize_subject_keys_for_grade(subject_label: str, grade: int) -> List[str
     return [s]
 
 
+def _format_hours(hours: float) -> str:
+    """Formats an hours value for display, dropping a trailing '.0' when whole."""
+    if float(hours).is_integer():
+        return str(int(hours))
+    return f"{hours:g}"
+
+
 def resolve_multi_subject_hours(
     teacher_id: str,
     teacher_name: str,
@@ -276,20 +283,29 @@ def resolve_multi_subject_hours(
         )
     ]
 
+    hours_str = _format_hours(total_hours)
+    subjects_str = ", ".join(subjects)
+
     if len(unique_breakdowns) > 1:
         mismatch_type = "ambiguous_breakdown"
-        reason = f"Ambiguous: found {len(unique_breakdowns)} possible combinations summing to {total_hours} hrs"
+        message = (
+            f"Не удалось точно определить, сколько часов из {hours_str} у преподавателя "
+            f"{teacher_name} в классе {class_name} относится к каждому предмету ({subjects_str}) — "
+            f"несколько вариантов распределения дают одинаковую сумму. Все часы условно отнесены "
+            f"к предмету «{primary_subject}» — проверьте вручную."
+        )
     else:
         mismatch_type = "no_valid_breakdown"
-        reason = f"No curriculum combination for grade {grade} summed to {total_hours} hrs"
+        message = (
+            f"У преподавателя {teacher_name} в классе {class_name} указано {hours_str} ч./нед. "
+            f"по предметам ({subjects_str}), но по учебному плану для этого класса такая сумма часов "
+            f"не предусмотрена — возможно, это дополнительный школьный час. Все часы условно отнесены "
+            f"к предмету «{primary_subject}» — проверьте вручную."
+        )
 
     issue = ValidationIssue(
         severity="warning",
-        message=(
-            f"Multi-subject workload for teacher '{teacher_name}' (ID: {teacher_id}) in class '{class_name}' "
-            f"could not be uniquely resolved to curriculum subjects. {reason}. "
-            f"Defaulted {total_hours} hrs to '{primary_subject}'."
-        ),
+        message=message,
         context={
             "mismatch_type": mismatch_type,
             "teacher_id": teacher_id,

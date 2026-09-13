@@ -33,6 +33,20 @@ def verify_schedule_integrity(assignments: List[Assignment], schedule: List[Sche
         else:
             class_subgroup_slot_map[(slot.class_name, slot.group, slot.day, slot.period)].append(slot)
 
+        # Constraint 4 check: Primary school (grades 1-4) never in periods 5-9
+        grade = int(slot.class_name[:2]) if slot.class_name[:2].isdigit() else int(slot.class_name[:1])
+        if 1 <= grade <= 4:
+            assert slot.period <= 4, (
+                f"Primary school violation: class {slot.class_name} (Grade {grade}) scheduled in period {slot.period} > 4"
+            )
+
+        # Constraint 5 check: PE never in period 1
+        s_low = slot.subject.lower().strip()
+        if "физ. культура" in s_low or "физическая культура" in s_low or "физ-ра" in s_low:
+            assert slot.period != 1, (
+                f"PE violation: subject {slot.subject} for class {slot.class_name} scheduled in period 1"
+            )
+
     for key, slots in teacher_slot_map.items():
         assert len(slots) == 1, f"Teacher double-booking violation for {key}: {slots}"
 
@@ -83,6 +97,62 @@ def test_small_synthetic_schedule():
     print("\nSample Scheduled Slots:")
     for slot in schedule[:10]:
         print(f"  {slot.day:<12} | Period {slot.period} | Class: {slot.class_name:<4} | Subject: {slot.subject:<15} | Teacher: {slot.teacher_id}")
+
+
+def test_primary_school_constraint():
+    """Synthetic test case verifying primary school (grades 1-4) is strictly confined to periods 1-4.
+
+    1. Feasible case: Grade 1 class with 16 hours/week (fits in 20 available slots in periods 1-4).
+    2. Infeasible case: Grade 1 class with 22 hours/week (cannot fit in 20 slots across 5 days x 4 periods).
+    """
+    # Feasible primary workload (16 hours)
+    feasible_assignments = [
+        Assignment(teacher_id="teacher-1", subject="Русский язык", class_name="1А", hours_per_week=5.0),
+        Assignment(teacher_id="teacher-1", subject="Математика", class_name="1А", hours_per_week=4.0),
+        Assignment(teacher_id="teacher-1", subject="Литературное чтение", class_name="1А", hours_per_week=4.0),
+        Assignment(teacher_id="teacher-pe", subject="физ. культура", class_name="1А", hours_per_week=3.0),
+    ]
+
+    schedule, status = generate_schedule(feasible_assignments, time_limit_seconds=10)
+    assert status == SolverStatus.OPTIMAL, f"Expected optimal, got: {status}"
+    assert len(schedule) == 16
+    verify_schedule_integrity(feasible_assignments, schedule)
+
+    for slot in schedule:
+        assert slot.period <= 4, f"Primary class 1А scheduled in period {slot.period} > 4"
+
+    print("\n✅ Verified: Grade 1 class schedule only uses periods 1-4.")
+
+    # Infeasible primary workload (22 hours > 20 max slots)
+    infeasible_assignments = [
+        Assignment(teacher_id="teacher-1", subject="Русский язык", class_name="1А", hours_per_week=12.0),
+        Assignment(teacher_id="teacher-1", subject="Математика", class_name="1А", hours_per_week=10.0),
+    ]
+    _, inf_status = generate_schedule(infeasible_assignments, time_limit_seconds=5)
+    assert inf_status == SolverStatus.INFEASIBLE, f"Expected infeasible for 22h in 20 slots, got {inf_status}"
+    print("✅ Verified: Over-capacity primary class correctly reported as INFEASIBLE.")
+
+
+def test_pe_no_period_1_constraint():
+    """Synthetic test verifying Physical Education is never scheduled in period 1."""
+    assignments = [
+        Assignment(teacher_id="pe-t1", subject="Физическая культура", class_name="7А", hours_per_week=3.0),
+        Assignment(teacher_id="pe-t1", subject="физ. культура", class_name="7Б", hours_per_week=3.0),
+        Assignment(teacher_id="math-t", subject="Математика", class_name="7А", hours_per_week=4.0),
+        Assignment(teacher_id="math-t", subject="Математика", class_name="7Б", hours_per_week=4.0),
+    ]
+
+    schedule, status = generate_schedule(assignments, time_limit_seconds=10)
+    assert status == SolverStatus.OPTIMAL
+    assert len(schedule) == 14
+    verify_schedule_integrity(assignments, schedule)
+
+    pe_slots = [s for s in schedule if "физ" in s.subject.lower()]
+    assert len(pe_slots) == 6
+    for s in pe_slots:
+        assert s.period != 1, f"PE scheduled in period 1: {s}"
+
+    print(f"✅ Verified: All {len(pe_slots)} PE slots scheduled in periods > 1.")
 
 
 def test_subgroup_synthetic_schedule():

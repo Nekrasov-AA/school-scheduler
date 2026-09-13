@@ -8,6 +8,7 @@ Formulates timetable generation as a Constraint Satisfaction Problem (CSP):
 """
 
 import logging
+import re
 from collections import defaultdict
 from enum import Enum
 from typing import Dict, List, Literal, Optional, Tuple
@@ -36,12 +37,31 @@ class SolverStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+def get_grade_from_class_name(class_name: str) -> int:
+    """Extract grade level (1-11) from raw class identifier (e.g. '1А' -> 1, '11Б' -> 11)."""
+    m = re.match(r"^(\d+)", class_name.strip())
+    if not m:
+        raise ValueError(f"Cannot extract grade level from class name '{class_name}'")
+    return int(m.group(1))
+
+
+def is_pe_subject(subject: str) -> bool:
+    """Check if subject corresponds to Physical Education (Физическая культура / физ. культура / etc.)."""
+    s = subject.lower().strip()
+    return "физическая культура" in s or "физ. культура" in s or "физ-ра" in s or s == "физкультура"
+
+
 def generate_schedule(
     assignments: List[Assignment],
     time_limit_seconds: int = 60,
     num_search_workers: int = 8,
 ) -> Tuple[List[ScheduleSlot], SolverStatus]:
-    """Generates an optimal or feasible school timetable satisfying all hard constraints.
+    """Generates an optimal or feasible school timetable satisfying all hard constraints:
+    - Hard Constraint 1: A teacher can teach at most one class in a given (day, period) slot.
+    - Hard Constraint 2: A class can attend at most one lesson per (day, period), with parallel subgroup support.
+    - Hard Constraint 3: The total number of scheduled slots for each assignment must equal its required hours.
+    - Hard Constraint 4: Primary school classes (grades 1-4) can ONLY have lessons in periods 1-4 (no periods 5-9).
+    - Hard Constraint 5: Physical Education (Физическая культура) is NEVER scheduled in period 1.
 
     Args:
         assignments: List of teacher-class-subject workload assignments.
@@ -65,15 +85,33 @@ def generate_schedule(
         if req_hours <= 0:
             continue
 
+        grade = get_grade_from_class_name(assignment.class_name)
+        is_primary = 1 <= grade <= 4
+        is_pe = is_pe_subject(assignment.subject)
+
+        # Determine candidate periods for this assignment:
+        # - Primary school (grades 1-4) only allowed in periods 1-4
+        # - Physical Education (PE) is never allowed in period 1
+        allowed_periods = []
+        for period in PERIODS:
+            if is_primary and period > 4:
+                continue
+            if is_pe and period == 1:
+                continue
+            allowed_periods.append(period)
+
         for day in DAYS:
-            for period in PERIODS:
+            for period in allowed_periods:
                 var_name = f"x_a{a_idx}_{day}_{period}"
                 x[(a_idx, day, period)] = model.NewBoolVar(var_name)
 
         # Constraint 3: Each assignment must be scheduled for exactly its required hours
-        model.Add(
-            sum(x[(a_idx, day, period)] for day in DAYS for period in PERIODS) == req_hours
-        )
+        assigned_vars = [
+            x[(a_idx, day, period)]
+            for day in DAYS
+            for period in allowed_periods
+        ]
+        model.Add(sum(assigned_vars) == req_hours)
 
     # Constraint 1: A teacher can teach at most one lesson per (day, period)
     # Group assignments by teacher_id

@@ -5,3 +5,4 @@ dist/
 *.pyc
 .env
 .DS_Store
+backend/tests/output/

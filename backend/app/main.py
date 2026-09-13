@@ -1,19 +1,28 @@
+import io
 import logging
 import os
 import shutil
 import tempfile
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
-from app.models.schema import GenerateScheduleResponse
+from app.export.docx_exporter import export_schedule_to_docx
+from app.models.schema import (
+    Assignment,
+    GenerateScheduleResponse,
+    ScheduleSlot,
+    Teacher,
+    ValidationIssue,
+)
 from app.parsers.curriculum_parser import (
     extract_grade11_class_track_mapping,
     parse_curriculum_docx,
 )
 from app.parsers.workload_parser import parse_workload_xlsx
-from app.solver.scheduler import generate_schedule
+from app.solver.scheduler import SolverStatus, generate_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -66,28 +75,22 @@ def get_info() -> Dict[str, Any]:
     }
 
 
-@app.post(
-    "/api/generate-schedule",
-    response_model=GenerateScheduleResponse,
-    summary="Generate a school schedule from uploaded curriculum and workload files",
-)
-async def generate_schedule_endpoint(
-    up_noo: UploadFile = File(..., description="Curriculum file for grades 1-4 (.docx)"),
-    up_ooo: UploadFile = File(..., description="Curriculum file for grades 5-9 (.docx)"),
-    up_soo: UploadFile = File(..., description="Curriculum file for grades 10-11 (.docx)"),
-    workload: UploadFile = File(..., description="Teacher workload matrix (.xlsx)"),
-    time_limit_seconds: int = Query(default=30, ge=1, le=300, description="Solver timeout in seconds"),
-) -> GenerateScheduleResponse:
-    """Full schedule generation pipeline:
-    1. Parse three curriculum documents (.docx) -> list[CurriculumRequirement].
-    2. Extract Grade 11 class-to-track mapping from up_soo.docx.
-    3. Parse teacher workload spreadsheet (.xlsx) with curriculum cross-referencing -> list[Assignment].
-    4. Solve Constraint Satisfaction Problem with Google OR-Tools CP-SAT -> list[ScheduleSlot].
+async def _execute_schedule_pipeline(
+    up_noo: UploadFile,
+    up_ooo: UploadFile,
+    up_soo: UploadFile,
+    workload: UploadFile,
+    time_limit_seconds: int = 30,
+) -> Tuple[List[ScheduleSlot], SolverStatus, List[Teacher], List[ValidationIssue]]:
+    """Shared pipeline execution helper:
+    1. Saves uploaded files to a temp directory.
+    2. Parses all 3 curriculum files & extracts Grade 11 track mappings.
+    3. Parses workload spreadsheet with curriculum cross-referencing and subgroup detection.
+    4. Runs CP-SAT timetable solver.
     """
     temp_dir = tempfile.mkdtemp(prefix="school_scheduler_")
 
     try:
-        # Save uploaded files to disk for path-based parsers
         file_map = {
             "up_noo": (up_noo, os.path.join(temp_dir, "up_noo.docx")),
             "up_ooo": (up_ooo, os.path.join(temp_dir, "up_ooo.docx")),
@@ -158,16 +161,87 @@ async def generate_schedule_endpoint(
                 detail=f"Solver execution failed: {str(e)}",
             )
 
-        return GenerateScheduleResponse(
-            schedule=schedule,
-            solver_status=solver_status.value,
-            warnings=warnings,
-        )
+        return schedule, solver_status, teachers, warnings
 
     finally:
-        # Clean up temporary directory
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception as e:
             logger.warning("Failed to clean up temp dir %s: %s", temp_dir, e)
+
+
+@app.post(
+    "/api/generate-schedule",
+    response_model=GenerateScheduleResponse,
+    summary="Generate a school schedule from uploaded curriculum and workload files",
+)
+async def generate_schedule_endpoint(
+    up_noo: UploadFile = File(..., description="Curriculum file for grades 1-4 (.docx)"),
+    up_ooo: UploadFile = File(..., description="Curriculum file for grades 5-9 (.docx)"),
+    up_soo: UploadFile = File(..., description="Curriculum file for grades 10-11 (.docx)"),
+    workload: UploadFile = File(..., description="Teacher workload matrix (.xlsx)"),
+    time_limit_seconds: int = Query(default=30, ge=1, le=300, description="Solver timeout in seconds"),
+) -> GenerateScheduleResponse:
+    """Full schedule generation pipeline returning JSON timetable data."""
+    schedule, solver_status, _, warnings = await _execute_schedule_pipeline(
+        up_noo=up_noo,
+        up_ooo=up_ooo,
+        up_soo=up_soo,
+        workload=workload,
+        time_limit_seconds=time_limit_seconds,
+    )
+
+    return GenerateScheduleResponse(
+        schedule=schedule,
+        solver_status=solver_status.value,
+        warnings=warnings,
+    )
+
+
+@app.post(
+    "/api/generate-schedule/export",
+    summary="Generate a school schedule and download it as a formatted DOCX document",
+    response_description="Formatted Word document (.docx)",
+)
+async def generate_and_export_schedule_endpoint(
+    up_noo: UploadFile = File(..., description="Curriculum file for grades 1-4 (.docx)"),
+    up_ooo: UploadFile = File(..., description="Curriculum file for grades 5-9 (.docx)"),
+    up_soo: UploadFile = File(..., description="Curriculum file for grades 10-11 (.docx)"),
+    workload: UploadFile = File(..., description="Teacher workload matrix (.xlsx)"),
+    time_limit_seconds: int = Query(default=30, ge=1, le=300, description="Solver timeout in seconds"),
+) -> StreamingResponse:
+    """Runs the full schedule generation pipeline and returns a downloadable .docx master schedule table."""
+    schedule, solver_status, teachers, warnings = await _execute_schedule_pipeline(
+        up_noo=up_noo,
+        up_ooo=up_ooo,
+        up_soo=up_soo,
+        workload=workload,
+        time_limit_seconds=time_limit_seconds,
+    )
+
+    # Export to docx in a temporary file and stream to client
+    temp_docx = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+    temp_docx_path = temp_docx.name
+    temp_docx.close()
+
+    try:
+        export_schedule_to_docx(
+            schedule=schedule,
+            teachers=teachers,
+            output_path=temp_docx_path,
+        )
+
+        with open(temp_docx_path, "rb") as f:
+            docx_bytes = f.read()
+    finally:
+        try:
+            os.remove(temp_docx_path)
+        except Exception:
+            pass
+
+    return StreamingResponse(
+        io.BytesIO(docx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="schedule.docx"'},
+    )
 

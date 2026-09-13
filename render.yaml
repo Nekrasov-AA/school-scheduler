@@ -21,7 +21,7 @@ services:
       # multi-core estimates suggest. See docs/DEPLOYMENT.md if this still
       # isn't enough for the full real dataset.
       - key: SOLVER_TIME_LIMIT_SECONDS
-        value: "200"
+        value: "300"
 
   - type: web
     name: school-scheduler-frontend

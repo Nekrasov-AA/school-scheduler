@@ -174,7 +174,7 @@ export const ScheduleForm: React.FC<ScheduleFormProps> = ({
           </div>
         </CardContent>
 
-        <CardFooter className="flex justify-end pt-2">
+        <CardFooter className="flex flex-col items-end gap-2 pt-2">
           <Button
             type="submit"
             size="lg"
@@ -190,6 +190,11 @@ export const ScheduleForm: React.FC<ScheduleFormProps> = ({
               "Сгенерировать расписание"
             )}
           </Button>
+          {isLoading && (
+            <p className="text-xs text-muted-foreground">
+              Это может занять до 5 минут на бесплатном хостинге.
+            </p>
+          )}
         </CardFooter>
       </form>
     </Card>

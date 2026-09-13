@@ -61,12 +61,18 @@ class Assignment(BaseModel):
     Notes on fields:
     - `class_name`: References a specific class cohort (e.g., '5А'), unlike `CurriculumRequirement.grade`.
     - `hours_per_week`: Teaching hours per week allocated to this teacher for this class and subject.
+    - `group`: Subgroup identifier (e.g. '1', '2', '3') when a class is split for a subject
+      (e.g., foreign language, computer science, technology, or profile electives). None means whole class.
     """
 
     teacher_id: str = Field(..., description="Teacher ID assigned to teach this subject")
     subject: str = Field(..., description="Subject name being taught")
     class_name: str = Field(..., description="Target class name, e.g. '5А'")
     hours_per_week: float = Field(..., ge=0.0, description="Weekly hours assigned to this teacher for this class")
+    group: Optional[str] = Field(
+        default=None,
+        description="Subgroup identifier (e.g. '1', '2') when class is split, or None for whole class",
+    )
 
 
 class ScheduleSlot(BaseModel):

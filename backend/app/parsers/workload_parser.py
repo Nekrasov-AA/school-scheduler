@@ -415,6 +415,27 @@ def parse_workload_xlsx(
                 if issue:
                     warnings.append(issue)
 
+    # Step 4: Detect parallel subgroups for (class_name, subject) pairs with multiple teachers
+    # When multiple distinct teachers teach the same subject to the same class, assign group="1", "2", ...
+    pair_assignments: Dict[Tuple[str, str], List[Assignment]] = defaultdict(list)
+    for a in assignments:
+        pair_assignments[(a.class_name, a.subject)].append(a)
+
+    for (class_name, subject), a_list in pair_assignments.items():
+        distinct_teachers = set(a.teacher_id for a in a_list)
+        if len(distinct_teachers) > 1:
+            # Assign group numbers in order of teacher occurrence
+            teacher_to_group: Dict[str, str] = {}
+            curr_group_num = 1
+            for a in a_list:
+                if a.teacher_id not in teacher_to_group:
+                    teacher_to_group[a.teacher_id] = str(curr_group_num)
+                    curr_group_num += 1
+                a.group = teacher_to_group[a.teacher_id]
+        else:
+            for a in a_list:
+                a.group = None
+
     logger.info(
         "Parsed %d teachers, %d assignments (%d validation warnings) from sheet '%s'",
         len(teachers),

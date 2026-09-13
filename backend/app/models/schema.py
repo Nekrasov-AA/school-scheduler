@@ -138,9 +138,13 @@ class ParsedSchoolData(BaseModel):
 
 
 class GenerateScheduleResponse(BaseModel):
-    """Response payload containing generated timetable slots and any validation warnings."""
+    """Response payload containing generated timetable slots, solver outcome status, and validation warnings."""
 
     schedule: List[ScheduleSlot] = Field(default_factory=list, description="Generated timetable lesson slots")
+    solver_status: str = Field(
+        default="optimal",
+        description="Status of the solver run ('optimal', 'feasible', 'infeasible', 'timeout', 'unknown')",
+    )
     warnings: List[ValidationIssue] = Field(
         default_factory=list, description="Validation issues, soft constraint warnings, or discrepancies"
     )

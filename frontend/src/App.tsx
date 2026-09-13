@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Calendar,
   ChevronDown,
@@ -12,10 +12,15 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { exportSchedule, generateSchedule, type ScheduleFiles } from "@/lib/api";
+import { exportJobResult, getJobStatus, submitScheduleJob, type ScheduleFiles } from "@/lib/api";
 import type { GenerateScheduleResponse } from "@/types";
 
 const WARNINGS_COLLAPSE_THRESHOLD = 5;
+const JOB_POLL_INTERVAL_MS = 2000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const SOLVER_STATUS_LABEL: Record<string, string> = {
   optimal: "Оптимальное решение",
@@ -39,12 +44,17 @@ function solverBadgeVariant(status: string): "success" | "warning" | "destructiv
 
 export const App: React.FC = () => {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
-  const [submittedFiles, setSubmittedFiles] = useState<ScheduleFiles | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [result, setResult] = useState<GenerateScheduleResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warningsCollapsed, setWarningsCollapsed] = useState(false);
+
+  // Guards against a stale poll loop applying results after a newer
+  // submission has started (the form itself prevents concurrent submits via
+  // isGenerating, but this keeps polling safe regardless).
+  const activeJobRef = useRef<string | null>(null);
 
   useEffect(() => {
     const apiUrl = import.meta.env.VITE_API_URL || "";
@@ -57,12 +67,32 @@ export const App: React.FC = () => {
     setIsGenerating(true);
     setError(null);
     setResult(null);
-    setSubmittedFiles(files);
+    setJobId(null);
 
     try {
-      const response = await generateSchedule(files);
-      setResult(response);
-      setWarningsCollapsed(response.warnings.length > WARNINGS_COLLAPSE_THRESHOLD);
+      const newJobId = await submitScheduleJob(files);
+      activeJobRef.current = newJobId;
+      setJobId(newJobId);
+
+      // Schedule generation runs as a background job on the server (a
+      // CP-SAT solve can take minutes on constrained hosts), so we poll for
+      // the result instead of waiting on a single long request.
+      while (activeJobRef.current === newJobId) {
+        const statusResponse = await getJobStatus(newJobId);
+
+        if (statusResponse.status === "done" && statusResponse.result) {
+          setResult(statusResponse.result);
+          setWarningsCollapsed(statusResponse.result.warnings.length > WARNINGS_COLLAPSE_THRESHOLD);
+          break;
+        }
+
+        if (statusResponse.status === "error") {
+          setError(statusResponse.error ?? "Не удалось сгенерировать расписание.");
+          break;
+        }
+
+        await sleep(JOB_POLL_INTERVAL_MS);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось сгенерировать расписание.");
     } finally {
@@ -71,13 +101,13 @@ export const App: React.FC = () => {
   };
 
   const handleDownload = async () => {
-    if (!submittedFiles) return;
+    if (!jobId) return;
 
     setIsDownloading(true);
     setError(null);
 
     try {
-      const blob = await exportSchedule(submittedFiles);
+      const blob = await exportJobResult(jobId);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;

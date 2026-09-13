@@ -19,3 +19,15 @@ export interface GenerateScheduleResponse {
   solver_status: "optimal" | "feasible" | "infeasible" | "timeout" | string;
   warnings: ValidationIssue[];
 }
+
+export interface JobCreatedResponse {
+  job_id: string;
+  status: "pending";
+}
+
+export interface JobStatusResponse {
+  job_id: string;
+  status: "pending" | "done" | "error";
+  result: GenerateScheduleResponse | null;
+  error: string | null;
+}

@@ -1,4 +1,4 @@
-import type { GenerateScheduleResponse } from "@/types";
+import type { JobCreatedResponse, JobStatusResponse } from "@/types";
 
 export interface ScheduleFiles {
   upNoo: File;
@@ -28,9 +28,10 @@ async function extractErrorMessage(response: Response): Promise<string> {
   return `Ошибка сервера (код ${response.status})`;
 }
 
-export async function generateSchedule(
-  files: ScheduleFiles
-): Promise<GenerateScheduleResponse> {
+// Schedule generation runs as a background job on the server (a CP-SAT solve
+// can take minutes), so this only submits the files and returns a job_id -
+// use getJobStatus to poll for the result.
+export async function submitScheduleJob(files: ScheduleFiles): Promise<string> {
   const response = await fetch(`${API_URL}/api/generate-schedule`, {
     method: "POST",
     body: buildFormData(files),
@@ -40,14 +41,22 @@ export async function generateSchedule(
     throw new Error(await extractErrorMessage(response));
   }
 
+  const data: JobCreatedResponse = await response.json();
+  return data.job_id;
+}
+
+export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
+  const response = await fetch(`${API_URL}/api/jobs/${jobId}`);
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response));
+  }
+
   return response.json();
 }
 
-export async function exportSchedule(files: ScheduleFiles): Promise<Blob> {
-  const response = await fetch(`${API_URL}/api/generate-schedule/export`, {
-    method: "POST",
-    body: buildFormData(files),
-  });
+export async function exportJobResult(jobId: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}/api/jobs/${jobId}/export`);
 
   if (!response.ok) {
     throw new Error(await extractErrorMessage(response));

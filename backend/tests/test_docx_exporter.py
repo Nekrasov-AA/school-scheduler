@@ -140,7 +140,7 @@ def test_real_dataset_schedule_docx_export():
 
 
 def test_export_endpoint_happy_path():
-    """Test POST /api/generate-schedule/export returns valid downloadable docx file."""
+    """Test the async job flow end-to-end: submit -> poll until done -> GET .../export."""
     up_noo_path = os.path.join(FIXTURES_DIR, "up_noo.docx")
     up_ooo_path = os.path.join(FIXTURES_DIR, "up_ooo.docx")
     up_soo_path = os.path.join(FIXTURES_DIR, "up_soo.docx")
@@ -161,15 +161,32 @@ def test_export_endpoint_happy_path():
             "workload": ("workload.xlsx", f_workload, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         }
 
-        response = client.post(
-            "/api/generate-schedule/export",
+        submit_response = client.post(
+            "/api/generate-schedule",
             files=files,
             params={"time_limit_seconds": 30},
         )
 
+    assert submit_response.status_code == 202, submit_response.text
+    job_id = submit_response.json()["job_id"]
+
+    deadline = time.time() + 60
+    job_data = None
+    while time.time() < deadline:
+        poll_response = client.get(f"/api/jobs/{job_id}")
+        assert poll_response.status_code == 200
+        job_data = poll_response.json()
+        if job_data["status"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+
+    assert job_data is not None and job_data["status"] == "done", f"Job did not finish successfully: {job_data}"
+
+    response = client.get(f"/api/jobs/{job_id}/export")
+
     elapsed = time.time() - start_time
 
-    print(f"\n==================== EXPORT ENDPOINT API RUN ====================")
+    print(f"\n==================== EXPORT ENDPOINT API RUN (async job) ====================")
     print(f"HTTP Status Code: {response.status_code}")
     print(f"Content-Type: {response.headers.get('content-type')}")
     print(f"Content-Disposition: {response.headers.get('content-disposition')}")

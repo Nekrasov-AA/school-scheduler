@@ -8,6 +8,7 @@ Formulates timetable generation as a Constraint Satisfaction Problem (CSP):
 """
 
 import logging
+import os
 import re
 from collections import defaultdict
 from enum import Enum
@@ -18,6 +19,12 @@ from ortools.sat.python import cp_model
 from app.models.schema import Assignment, ScheduleSlot
 
 logger = logging.getLogger(__name__)
+
+# SOLVER_WORKERS: number of parallel CP-SAT search workers. Defaults to 4 for
+# local/multi-core dev. On a constrained single-core host (e.g. Render's free
+# tier), requesting multiple workers adds thread-scheduling overhead for
+# threads that can't actually run in parallel, so set this to 1 there.
+DEFAULT_SOLVER_WORKERS = int(os.getenv("SOLVER_WORKERS", "4"))
 
 DAYS: List[Literal["Понедельник", "Вторник", "Среда", "Четверг", "Пятница"]] = [
     "Понедельник",
@@ -69,7 +76,7 @@ def is_pe_subject(subject: str) -> bool:
 def generate_schedule(
     assignments: List[Assignment],
     time_limit_seconds: int = 60,
-    num_search_workers: int = 8,
+    num_search_workers: int = DEFAULT_SOLVER_WORKERS,
     grade_period_caps: Optional[Dict[Any, int]] = None,
 ) -> Tuple[List[ScheduleSlot], SolverStatus]:
     """Generates an optimal or feasible school timetable satisfying all hard constraints:
@@ -82,7 +89,8 @@ def generate_schedule(
     Args:
         assignments: List of teacher-class-subject workload assignments.
         time_limit_seconds: Maximum solve time in seconds.
-        num_search_workers: Number of parallel search workers for CP-SAT.
+        num_search_workers: Number of parallel search workers for CP-SAT. Defaults to
+            DEFAULT_SOLVER_WORKERS (env var SOLVER_WORKERS, default 4).
         grade_period_caps: Optional override for grade period limits (defaults to GRADE_PERIOD_CAPS).
 
     Returns:

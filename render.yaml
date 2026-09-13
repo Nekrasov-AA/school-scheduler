@@ -13,6 +13,15 @@ services:
       # at via unsupported Blueprint syntax.
       - key: ALLOWED_ORIGINS
         sync: false
+      # Free-tier instances are single-core; requesting multiple CP-SAT search
+      # workers just adds thread-scheduling overhead with no real parallelism.
+      - key: SOLVER_WORKERS
+        value: "1"
+      # A single weak core needs much more wall-clock time than local dev
+      # multi-core estimates suggest. See docs/DEPLOYMENT.md if this still
+      # isn't enough for the full real dataset.
+      - key: SOLVER_TIME_LIMIT_SECONDS
+        value: "200"
 
   - type: web
     name: school-scheduler-frontend

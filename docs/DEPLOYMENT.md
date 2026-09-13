@@ -55,3 +55,34 @@ Both services are configured with `plan: free`. On Render's free tier:
 - This is fine for demos/evaluation; for production use with real users,
   upgrade both services off the free plan to avoid the sleep/cold-start
   behavior.
+
+### Solver performance on free-tier CPU
+
+Render's free-tier instances give the container a single CPU core (its own
+logs show `Setting WEB_CONCURRENCY=1 by default, based on available CPUs`).
+CP-SAT's parallel search doesn't help — and actively hurts — on a single
+core, since the extra search workers just add thread-scheduling overhead
+for threads that can never run concurrently. `render.yaml` tunes for this:
+
+- `SOLVER_WORKERS=1` (backend `SOLVER_WORKERS` env var, read in
+  `app/solver/scheduler.py`) — disables CP-SAT's multi-threaded search.
+  Locally this defaults to 4 for faster iteration on a multi-core dev
+  machine.
+- `SOLVER_TIME_LIMIT_SECONDS=200` (backend env var, read in `app/main.py`)
+  — gives the solver much more wall-clock time than the ~1.3s the full real
+  dataset (2242 slots) took locally. A single weak core needs a lot more
+  time than that local, multi-core estimate suggests. Locally this defaults
+  to 30s for fast iteration.
+
+**If the full real dataset still doesn't solve within a few minutes on
+Render's free tier even with these settings**, the honest conclusion is
+that free-tier compute is insufficient for this problem size. In that case,
+either:
+
+- Run the demo against a smaller subset of the data (e.g. filter the
+  workload file down to fewer classes) so the deployed site stays
+  responsive as a UI demo, or
+- Tell the school administrator to run the full pipeline locally via
+  `docker-compose up` for real use, treating the deployed Render site as a
+  UI/workflow demo on lighter datasets rather than the production tool for
+  the real schedule.

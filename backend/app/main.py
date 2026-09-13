@@ -54,6 +54,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# SOLVER_TIME_LIMIT_SECONDS: default solver timeout when the client doesn't
+# override it. Defaults to 30s for local/multi-core dev; set higher (e.g.
+# 180-240) on a constrained single-core host, where the real dataset needs
+# much more wall-clock time than a local dev machine's estimate suggests.
+DEFAULT_TIME_LIMIT_SECONDS = int(os.getenv("SOLVER_TIME_LIMIT_SECONDS", "30"))
+
 
 @app.get("/")
 def read_root() -> Dict[str, str]:
@@ -88,7 +94,7 @@ async def _execute_schedule_pipeline(
     up_ooo: UploadFile,
     up_soo: UploadFile,
     workload: UploadFile,
-    time_limit_seconds: int = 30,
+    time_limit_seconds: int = DEFAULT_TIME_LIMIT_SECONDS,
 ) -> Tuple[List[ScheduleSlot], SolverStatus, List[Teacher], List[ValidationIssue]]:
     """Shared pipeline execution helper:
     1. Saves uploaded files to a temp directory.
@@ -188,7 +194,9 @@ async def generate_schedule_endpoint(
     up_ooo: UploadFile = File(..., description="Curriculum file for grades 5-9 (.docx)"),
     up_soo: UploadFile = File(..., description="Curriculum file for grades 10-11 (.docx)"),
     workload: UploadFile = File(..., description="Teacher workload matrix (.xlsx)"),
-    time_limit_seconds: int = Query(default=30, ge=1, le=300, description="Solver timeout in seconds"),
+    time_limit_seconds: int = Query(
+        default=DEFAULT_TIME_LIMIT_SECONDS, ge=1, le=300, description="Solver timeout in seconds"
+    ),
 ) -> GenerateScheduleResponse:
     """Full schedule generation pipeline returning JSON timetable data."""
     schedule, solver_status, _, warnings = await _execute_schedule_pipeline(
@@ -216,7 +224,9 @@ async def generate_and_export_schedule_endpoint(
     up_ooo: UploadFile = File(..., description="Curriculum file for grades 5-9 (.docx)"),
     up_soo: UploadFile = File(..., description="Curriculum file for grades 10-11 (.docx)"),
     workload: UploadFile = File(..., description="Teacher workload matrix (.xlsx)"),
-    time_limit_seconds: int = Query(default=30, ge=1, le=300, description="Solver timeout in seconds"),
+    time_limit_seconds: int = Query(
+        default=DEFAULT_TIME_LIMIT_SECONDS, ge=1, le=300, description="Solver timeout in seconds"
+    ),
 ) -> StreamingResponse:
     """Runs the full schedule generation pipeline and returns a downloadable .docx master schedule table."""
     schedule, solver_status, teachers, warnings = await _execute_schedule_pipeline(

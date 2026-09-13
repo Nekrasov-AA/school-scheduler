@@ -11,7 +11,7 @@ import logging
 import re
 from collections import defaultdict
 from enum import Enum
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from ortools.sat.python import cp_model
 
@@ -27,6 +27,21 @@ DAYS: List[Literal["Понедельник", "Вторник", "Среда", "Ч
     "Пятница",
 ]
 PERIODS: List[int] = list(range(1, 10))  # 1 to 9 (45 total periods in week)
+
+# -----------------------------------------------------------------------------
+# Maximum period caps per grade level (Constraint 4).
+#
+# PLACEHOLDER pending confirmation from school administration (see docs/OPEN_QUESTIONS.md, Question #1):
+# - Grade 1 workload has 21-22 hrs/week, requiring up to period 5 on 1-2 days per week (cap: 5).
+# - Grades 2-4 workload has 25-26 hrs/week, with shared specialist teachers (PE, Music, English),
+#   requiring periods 1-6 (cap: 6) to accommodate non-overlapping teacher schedules.
+# - Grades 5-11 use the full standard daily schedule up to period 9.
+# -----------------------------------------------------------------------------
+GRADE_PERIOD_CAPS: Dict[Any, int] = {
+    1: 5,                  # Grade 1 (21-22 hrs/week -> up to period 5)
+    "default_primary": 6,  # Grades 2-4 (25-26 hrs/week + specialist teachers -> up to period 6)
+    "default_secondary": 9,# Grades 5-11 (standard periods 1-9)
+}
 
 
 class SolverStatus(str, Enum):
@@ -55,18 +70,20 @@ def generate_schedule(
     assignments: List[Assignment],
     time_limit_seconds: int = 60,
     num_search_workers: int = 8,
+    grade_period_caps: Optional[Dict[Any, int]] = None,
 ) -> Tuple[List[ScheduleSlot], SolverStatus]:
     """Generates an optimal or feasible school timetable satisfying all hard constraints:
     - Hard Constraint 1: A teacher can teach at most one class in a given (day, period) slot.
     - Hard Constraint 2: A class can attend at most one lesson per (day, period), with parallel subgroup support.
     - Hard Constraint 3: The total number of scheduled slots for each assignment must equal its required hours.
-    - Hard Constraint 4: Primary school classes (grades 1-4) can ONLY have lessons in periods 1-4 (no periods 5-9).
+    - Hard Constraint 4: Grade period caps (primary grades restricted to early periods, e.g. 1-5 or 1-6).
     - Hard Constraint 5: Physical Education (Физическая культура) is NEVER scheduled in period 1.
 
     Args:
         assignments: List of teacher-class-subject workload assignments.
         time_limit_seconds: Maximum solve time in seconds.
         num_search_workers: Number of parallel search workers for CP-SAT.
+        grade_period_caps: Optional override for grade period limits (defaults to GRADE_PERIOD_CAPS).
 
     Returns:
         (schedule_slots, solver_status) tuple.
@@ -74,6 +91,7 @@ def generate_schedule(
     if not assignments:
         return [], SolverStatus.OPTIMAL
 
+    caps = grade_period_caps or GRADE_PERIOD_CAPS
     model = cp_model.CpModel()
 
     # Decision variables: x[assignment_idx, day, period] in {0, 1}
@@ -86,15 +104,21 @@ def generate_schedule(
             continue
 
         grade = get_grade_from_class_name(assignment.class_name)
-        is_primary = 1 <= grade <= 4
+        if grade == 1:
+            max_period = caps.get(1, 5)
+        elif 2 <= grade <= 4:
+            max_period = caps.get(grade, caps.get("default_primary", 6))
+        else:
+            max_period = caps.get(grade, caps.get("default_secondary", 9))
+
         is_pe = is_pe_subject(assignment.subject)
 
         # Determine candidate periods for this assignment:
-        # - Primary school (grades 1-4) only allowed in periods 1-4
+        # - Primary school classes capped by max_period (e.g. 5 for Grade 1, 6 for Grades 2-4)
         # - Physical Education (PE) is never allowed in period 1
         allowed_periods = []
         for period in PERIODS:
-            if is_primary and period > 4:
+            if period > max_period:
                 continue
             if is_pe and period == 1:
                 continue

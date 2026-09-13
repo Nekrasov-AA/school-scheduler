@@ -33,11 +33,16 @@ def verify_schedule_integrity(assignments: List[Assignment], schedule: List[Sche
         else:
             class_subgroup_slot_map[(slot.class_name, slot.group, slot.day, slot.period)].append(slot)
 
-        # Constraint 4 check: Primary school (grades 1-4) never in periods 5-9
+        # Constraint 4 check: Primary school period caps
+        # Grade 1 <= 5, Grades 2-4 <= 6, Grades 5-11 <= 9
         grade = int(slot.class_name[:2]) if slot.class_name[:2].isdigit() else int(slot.class_name[:1])
-        if 1 <= grade <= 4:
-            assert slot.period <= 4, (
-                f"Primary school violation: class {slot.class_name} (Grade {grade}) scheduled in period {slot.period} > 4"
+        if grade == 1:
+            assert slot.period <= 5, (
+                f"Grade 1 violation: class {slot.class_name} scheduled in period {slot.period} > 5"
+            )
+        elif 2 <= grade <= 4:
+            assert slot.period <= 6, (
+                f"Primary school violation: class {slot.class_name} (Grade {grade}) scheduled in period {slot.period} > 6"
             )
 
         # Constraint 5 check: PE never in period 1
@@ -100,10 +105,10 @@ def test_small_synthetic_schedule():
 
 
 def test_primary_school_constraint():
-    """Synthetic test case verifying primary school (grades 1-4) is strictly confined to periods 1-4.
+    """Synthetic test case verifying primary school period caps.
 
-    1. Feasible case: Grade 1 class with 16 hours/week (fits in 20 available slots in periods 1-4).
-    2. Infeasible case: Grade 1 class with 22 hours/week (cannot fit in 20 slots across 5 days x 4 periods).
+    1. Feasible case: Grade 1 class with 16 hours/week (fits within period caps).
+    2. Infeasible case: Grade 1 class with 30 hours/week (cannot fit in 25 slots across 5 days x 5 periods).
     """
     # Feasible primary workload (16 hours)
     feasible_assignments = [
@@ -119,17 +124,17 @@ def test_primary_school_constraint():
     verify_schedule_integrity(feasible_assignments, schedule)
 
     for slot in schedule:
-        assert slot.period <= 4, f"Primary class 1А scheduled in period {slot.period} > 4"
+        assert slot.period <= 5, f"Grade 1 class 1А scheduled in period {slot.period} > 5"
 
-    print("\n✅ Verified: Grade 1 class schedule only uses periods 1-4.")
+    print("\n✅ Verified: Grade 1 class schedule only uses periods <= 5.")
 
-    # Infeasible primary workload (22 hours > 20 max slots)
+    # Infeasible primary workload (30 hours > 25 max slots for cap 5)
     infeasible_assignments = [
-        Assignment(teacher_id="teacher-1", subject="Русский язык", class_name="1А", hours_per_week=12.0),
-        Assignment(teacher_id="teacher-1", subject="Математика", class_name="1А", hours_per_week=10.0),
+        Assignment(teacher_id="teacher-1", subject="Русский язык", class_name="1А", hours_per_week=16.0),
+        Assignment(teacher_id="teacher-1", subject="Математика", class_name="1А", hours_per_week=14.0),
     ]
     _, inf_status = generate_schedule(infeasible_assignments, time_limit_seconds=5)
-    assert inf_status == SolverStatus.INFEASIBLE, f"Expected infeasible for 22h in 20 slots, got {inf_status}"
+    assert inf_status == SolverStatus.INFEASIBLE, f"Expected infeasible for 30h in 25 slots, got {inf_status}"
     print("✅ Verified: Over-capacity primary class correctly reported as INFEASIBLE.")
 
 

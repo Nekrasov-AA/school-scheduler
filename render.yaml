@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: school-scheduler-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    envVars:
+      # Set this once the frontend's Render URL is known (see docs/DEPLOYMENT.md).
+      # Render's `fromService` can only inject a bare host/port, not a full
+      # `https://...` URL, so this must be entered manually rather than guessed
+      # at via unsupported Blueprint syntax.
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+  - type: web
+    name: school-scheduler-frontend
+    runtime: static
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      # Vite inlines this at BUILD time, so it must be set before/at Blueprint
+      # creation (or the site rebuilt after changing it). See docs/DEPLOYMENT.md
+      # for why this can't be auto-wired via `fromService`.
+      - key: VITE_API_URL
+        sync: false
